@@ -5,16 +5,44 @@ const timeIncrementOfSample = 1 / samplingRate;
 //@ts-ignore
 if (!sampleRate) console.warn("sampleRate is not defined. Using 44100 instead.");
 
-const liveParameters = {
-    filter_k: 0.6,
-    filter_wet: 0.5,
-    exciter_level: 0.6,
-    exciter_att: 0.3,
-    exciter_decay: 1,
-    cross_feedback: 0,
-    level_to_feedback: -1,
-    exciter_detuning: 0,
-    amp_detuning: 0,
+const e = Math.E;
+const pi = Math.PI;
+const twoPi = pi * 2;
+
+const clip = (val) => {
+    if (val > 1) return 1;
+    if (val < -1) return -1;
+    return val;
+}
+const applyHardnessCurve = (val) => {
+    return e ^ (-val) * (e ^ val) - 1;
+}
+const applySigmoidRange = (input, alpha = 2.5) => {
+    return 2 / (1 + Math.pow(e, -alpha * input)) - 1;
+}
+
+const clamp = (v, min, max) => {
+    if (v < min) return min
+    if (v > max) return max
+    return v
+}
+
+const square = (t) => {
+    return (t % 1) < 0.5 ? 1 : -1;
+}
+
+const cosWindow = (t) => {
+    if (t < -1) return 0;
+    if (t > 1) return 0;
+    return Math.cos(t * twoPi) * 0.5 + 0.5;
+}
+
+const cosMultiWindow = (t) => {
+    return Math.cos(t * twoPi) * 0.5 + 0.5;
+}
+
+const sin = (t) => {
+    return Math.sin(t * twoPi);
 }
 
 class SampleBySampleOperator {
@@ -24,21 +52,16 @@ class SampleBySampleOperator {
     operation = (inSample) => inSample;
 }
 
-class Voice {
-    /**
-     * @param {number} size
-     * @param {Object} params
-     * @param {Float32Array} input
-     */
-    getBlock(size, params, input) { }
-    /**
-     * @param {Object} trigSettings
-     */
-    trig(trigSettings) { };
-    stealTrigger = (p) => this.trig(p);
-    stop() { }
-    isBusy = false;
+class SineOscillator extends SampleBySampleOperator {
+    frequency = 0;
+    phase = 0;
+    phaseIncrement = 1 / samplingRate;
+    operation = () => {
+        this.phase += this.phaseIncrement * this.frequency;
+        return Math.sin(this.phase * twoPi);
+    }
 }
+
 class Noise extends SampleBySampleOperator {
     operation = () => {
         // TODO: use fast, less precise random
@@ -94,6 +117,7 @@ class DelayLine extends SampleBySampleOperator {
         this.memory = [];
     }
 }
+
 class LpBoxcar extends SampleBySampleOperator {
     /** @type {number} */
     k
@@ -117,6 +141,7 @@ class LpBoxcar extends SampleBySampleOperator {
         }
     }
 }
+
 class DCRemover extends SampleBySampleOperator {
     /** @type {Number}*/
     memory = 0;
@@ -268,7 +293,7 @@ class Butterworth1 extends SampleBySampleOperator {
             if (n % 2) ++n;
             const o = isLowpass ? -1 / n : 1 / n;
             const fcut = fstop * Math.pow(Math.sqrt(d * d - 1), o);
-            const w0 = Math.PI * 2 * fcut / samplingRate;
+            const w0 = twoPi * fcut / samplingRate;
             const c = Math.cos(w0);
             for (let k = Math.floor(n / 2); k >= 1; --k) {
                 const q = -0.5 / Math.cos(Math.PI * (2 * k + n - 1) / (2 * n));
@@ -380,7 +405,7 @@ class LpMoog extends SampleBySampleOperator {
         this.set = (frequency, reso) => {
             // this.reset();
             if (frequency < 0) frequency = 0;
-            f = (frequency / samplingRate) * Math.PI * 2 // probably bogus, origially was * 1.16 but was not working well
+            f = (frequency / samplingRate) * twoPi // probably bogus, origially was * 1.16 but was not working well
 
             af = 1 - f;
             sqf = f * f;
@@ -412,18 +437,6 @@ class LpMoog extends SampleBySampleOperator {
 }
 
 
-const clip = (val) => {
-    if (val > 1) return 1;
-    if (val < -1) return -1;
-    return val;
-}
-const e = Math.E;
-const applyHardnessCurve = (val) => {
-    return e ^ (-val) * (e ^ val) - 1;
-}
-const applySigmoidRange = (input, alpha = 2.5) => {
-    return 2 / (1 + Math.pow(e, -alpha * input)) - 1;
-}
 
 class Lerper {
     increments = 0;
@@ -474,361 +487,8 @@ class Exciter extends SampleBySampleOperator {
     start({ amp }) { }
 }
 
-class NoiseExciter extends Exciter {
-    attack = 0.1;
-    decay = 0;
-    duration = 0;
-
-    /**
-     * @type {Lerper}
-     */
-    envelope = new Lerper();
-    noise = new Noise();
-    currentStage = 0;
-
-    constructor() {
-        super()
-    }
-
-    start({ amp }) {
-        this.envelope.set(
-            0,
-            amp * liveParameters.exciter_level,
-            this.attack * samplingRate
-        )
-        this.currentStage = 0;
-    }
-    operation = () => {
-        let aLevel = this.envelope.step();
-        let n = this.noise.operation();
-        if (this.decay === 0) this.decay = Infinity;
-        if (this.envelope.life < 1) {
-            this.currentStage++;
-            if (this.currentStage == 1) {
-                this.envelope.set(this.envelope.val, 0, this.decay * samplingRate)
-            }
-        }
-        return n *= aLevel;
-    }
-}
-
-class PluckerExciter extends Exciter {
-    attack = 0.1;
-    decay = 0.3;
-    duration = 0;
-
-    freq = 3;
-    interval = samplingRate / this.freq;
-    waveCounter = 0;
-
-    /**
-     * @type {Lerper}
-     */
-    envelope = new Lerper();
-    currentStage = 0;
-
-    constructor() {
-        super()
-    }
-
-    start({ amp }) {
-        this.envelope.set(
-            0,
-            amp * liveParameters.exciter_level,
-            this.attack * samplingRate
-        )
-        this.currentStage = 0;
-    }
-    operation = () => {
-        let aLevel = this.envelope.step();
-        let n = ((this.waveCounter % this.interval) / this.interval) * 2 - 1;
-        this.waveCounter++;
-        if (this.envelope.life < 1) {
-            this.currentStage++;
-            if (this.currentStage == 1) {
-                this.envelope.set(this.envelope.val, 0, this.decay * samplingRate)
-            }
-        }
-        return n *= aLevel;
-    }
-}
-
-/**
- * @typedef {'noise' | 'input' | 'plucker'} ExciterTypeName
- * */
-
-class KarplusVoice extends Voice {
-    splsLeft = 0;
-    bleed = 0;
-    engaged = false;
-    measuredOutputLevel = 0;
-    applyGain = 1;
-    filterWet = 0.5;
-    ampToFeedback = -1;
-    exciterToTime = 0;
-    levelToTime = 0;
-    currentNormalSamplingPeriod = 1;
-    useInputExciter = false;
-    delayLine1 = new DelayLine();
-
-    /**  @type {Exciter} */
-    exciter = new (KarplusVoice.getExciterConstructor())();
-    syncExciterType = () => {
-        const targetExciter = KarplusVoice.getExciterConstructor();
-        if (targetExciter === this.exciter.constructor) return;
-        if (targetExciter === Exciter) {
-            this.useInputExciter = true;
-        }
-        this.exciter = new (KarplusVoice.getExciterConstructor())();
-    }
-
-    filter1 = new LpBoxcar(0.1);
-    dcRemover = new DCRemover();
-
-    /** @type {Array<KarplusVoice>} */
-    otherVoices = [];
-
-    constructor(voicesPool = []) {
-        super();
-        // so that it's possible to "leak" sound accross voices
-        this.otherVoices = voicesPool;
-
-    }
-
-
-    trig({ freq, amp, dur }) {
-        this.noiseEnvVal = amp;
-        this.currentNormalSamplingPeriod = samplingRate / freq;
-        this.delayLine1.delaySamples = this.currentNormalSamplingPeriod;
-        // to be removed
-        this.delayLine1.feedback = liveParameters.delay_feedback;
-        this.isBusy = true;
-        this.engaged = true;
-        this.splsLeft = dur ? dur * samplingRate : Infinity;
-        this.dcRemover.memory = 0;
-        this.bleed = liveParameters.cross_feedback;
-        this.filterWet = liveParameters.filter_wet;
-        this.ampToFeedback = liveParameters.level_to_feedback;
-        this.exciterToTime = liveParameters.exciter_detuning;
-        this.levelToTime = liveParameters.amp_detuning;
-        //exciter
-        this.syncExciterType();
-        this.exciter.attack = liveParameters.exciter_att;
-        this.exciter.decay = liveParameters.exciter_decay;
-        this.exciter.start({ amp });
-    }
-    stop() {
-        this.noiseEnvVal = 0;
-        this.isBusy = false;
-        this.engaged = false;
-        this.splsLeft = 0;
-        this.measuredOutputLevel = 0;
-        this.filter1.reset();
-        this.delayLine1.reset();
-
-    }
-    /** 
-     * @param {number} blockSize 
-     * @param {KarplusParameters} parameters 
-     * @param {Float32Array} input
-     * @returns {Float32Array} 
-     */
-    getBlock(blockSize, parameters, input) {
-        const output = new Float32Array(blockSize);
-        const aWet = 1 - this.filterWet;
-        const { delayFeedback, filterK } = parameters;
-        const delayFeedback0 = delayFeedback[0];
-        const filterK0 = filterK[0];
-        if (!this.engaged) return output;
-
-        for (let splN = 0; splN < blockSize; splN++) {
-            let sampleNow = 0;
-            /**
-             * noise exciter
-             */
-            const exciter = this.useInputExciter ? input[splN] : this.exciter.operation(0);
-            /**
-             * uncomment to listen to exciter only
-             *
-            output[splN] = sampleNow;
-            continue
-
-            /**/
-            let paramDelayFeedback = delayFeedback0;
-            if (delayFeedback.length > 1) {
-                paramDelayFeedback = delayFeedback[splN];
-            }
-            /* set filter K for this sample to the maybe modulated filterK parameter */
-            let paramFilterK = filterK0;
-            if (filterK.length > 1) {
-                paramFilterK = filterK[splN];
-            }
-            this.filter1.k = paramFilterK;
-            /**
-             * delay line
-             */
-            sampleNow += this.delayLine1.operation(exciter, (dry) => {
-                let w = this.filter1.operation(dry)
-                w = w * this.filterWet + dry * aWet;
-                const lv = Math.abs(w);
-                this.measuredOutputLevel -= 0.00001
-                if (lv > this.measuredOutputLevel) {
-                    this.measuredOutputLevel += lv / 1000
-                }
-
-                const amplification = clamp(1 / this.measuredOutputLevel, 0, 1.01);
-                this.delayLine1.feedback = paramDelayFeedback * (1 - this.ampToFeedback) + amplification * this.ampToFeedback;
-
-                return w;
-            });
-
-            sampleNow = this.dcRemover.operation(sampleNow);
-            sampleNow = clip(sampleNow);
-
-            // bleed
-            // if (this.bleed) this.otherVoices.forEach(voice => {
-            //     if (voice.engaged && voice !== this) {
-            //         voice.delayLine1.operationNoTime(sampleNow * this.bleed);
-            //     }
-            // });
-
-            if (this.exciterToTime) {
-                this.delayLine1.delaySamples = this.currentNormalSamplingPeriod
-                    + this.exciterToTime * this.exciter.envelope.val * samplingRate;
-            }
-            if (this.exciterToTime) {
-                this.delayLine1.delaySamples += this.levelToTime * this.measuredOutputLevel * samplingRate / 10;
-            }
-
-            output[splN] = sampleNow;
-
-        }
-        this.splsLeft -= blockSize;
-        if (this.splsLeft <= 0) {
-            this.stop();
-        }
-        // console.log(probe);
-        return output;
-    }
-}
-/** @type {ExciterTypeName} */
-KarplusVoice.exciterType = 'noise';
-KarplusVoice.getExciterConstructor = () => {
-    switch (KarplusVoice.exciterType) {
-        case 'noise':
-            return NoiseExciter;
-        case 'plucker':
-            return PluckerExciter;
-        case 'input':
-            // will not be used
-            return Exciter;
-        default:
-            throw new Error('unknown exciter type ' + KarplusVoice.exciterType);
-    }
-}
-
-/**
- * @template V
- * @typedef {(...p:any)=>V & Voice} VoiceFactory
- * @returns {V} 
- */
-/**
- * @template {Voice} V
- */
-class PoliManager {
-    maxVoices = 32;
-    /** @type {Array<V>} */
-    list = [];
-    lastStolenVoice = 0;
-    /** 
-     * @param { VoiceFactory<V> } voiceFactory
-     **/
-    constructor(voiceFactory) {
-        /**
-         * @returns {V}
-         */
-        this.getVoice = () => {
-            /** @type {V | null} */
-            let found = null;
-            this.list.forEach(voice => {
-                if (!voice.isBusy) {
-                    found = voice;
-                }
-            });
-            if (!found) {
-                if (this.list.length > this.maxVoices) {
-                    found = this.list[this.lastStolenVoice];
-                    this.lastStolenVoice += 1;
-                    this.lastStolenVoice %= this.maxVoices;
-                } else {
-                    found = voiceFactory(this.list);
-                    this.list.push(found);
-                }
-            }
-            return found;
-        }
-    }
-}
-
-
-/**
- * @typedef  {Object} KarplusStopVoiceMessage
- * @property {true} stop
- * @property {string} identifier
-*/
-/**
- * @typedef {Object} KarplusStopAllMessage 
- * @property {true} stopall: true;
-*/
-
-/**
-  * @typedef {Object} KarplusStartVoiceMessage 
-  * @property {number} f frequency
-  * @property {number} a amplitude or velocity
-  * @property {number?} s length of the note
-  * @property {number} i identifier
-*/
-/**
- * @typedef {Object} KarplusParamsChangeMessage 
- * @property {number?} fff feedback-filter's cutoff frequency
- * @property {number?} ffw feedback-filter's wet
- * @property {number?} ff feedback amt
- * @property {number?} xf cross-feedback amt
- * @property {number?} exa exciter attack
- * @property {number?} exd exciter decay
- * @property {ExciterTypeName?} extype exciter type
-*/
-/**
- * @typedef {Object} KarplusParameters
- * @property {number[]} parameters.delayFeedback
- * @property {number[]} parameters.filterK
- */
-/* to make ts work */
-if (false) {
-    function registerProcessor(arg0, arg1) {
-        throw new Error("Function not implemented.");
-    }
-}
-
-const clamp = (v, min, max) => {
-    if (v < min) return min
-    if (v > max) return max
-    return v
-}
-
-const square = (t) => {
-    return (t % 1) < 0.5 ? 1 : -1;
-}
-
-const cosWindow = (t) => {
-    if(t < 0) return 0;
-    if(t > 1) return 0;
-    return Math.cos((t-0.5) * Math.PI * 2) * 0.5 + 0.5;
-}
 
 class Harmonics extends SampleBySampleOperator {
-    /** @type {number[]} */
-    frequencies = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
     /** @type {number[]} */
     amps = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
     /** @type {number[]} */
@@ -841,6 +501,8 @@ class Harmonics extends SampleBySampleOperator {
     amp = 0.5;
     /** @type {number} */
     harmonicsCount = 1;
+    /** @type {number} */
+    harmonicOffset = 0;
 
     constructor() {
         super();
@@ -849,10 +511,10 @@ class Harmonics extends SampleBySampleOperator {
     operation = () => {
         let sample = 0;
         for (let i = 0; i < this.harmonicsCount; i++) {
-            if(!this.phase[i]) this.phase[i] = 0;
-            this.phase[i] += this.phaseIncrement * this.freq * this.frequencies[i];
+            if (!this.phase[i]) this.phase[i] = 0;
+            this.phase[i] += this.phaseIncrement * this.freq * (i - this.harmonicOffset);
             const tf = this.phase[i];
-            sample += Math.sin(tf* 2 * Math.PI) * this.amps[i];
+            sample += Math.sin(tf * twoPi) * this.amps[i];
             // sample += square(tf);
         }
         return sample * this.amp / this.harmonicsCount;
@@ -871,7 +533,7 @@ const createArray = (length, cb) => {
     }
     return ret;
 }
-
+// @ts-ignore
 class MyProcessor extends AudioWorkletProcessor {
     static get parameterDescriptors() {
         return [
@@ -906,12 +568,6 @@ class MyProcessor extends AudioWorkletProcessor {
                 maxValue: 9
             },
             {
-                name: "hinterval",
-                defaultValue: 2,
-                minValue: 0,
-                maxValue: 2,
-            },
-            {
                 name: "hoffset",
                 defaultValue: -1,
                 minValue: -5,
@@ -919,18 +575,24 @@ class MyProcessor extends AudioWorkletProcessor {
             },
             {
                 name: "hcount",
-                defaultValue: 1,
+                defaultValue: 5,
                 minValue: 1,
                 maxValue: 32,
             },
             {
                 name: "spectrum",
-                defaultValue: 5,
+                defaultValue: 0.5,
                 minValue: 0,
-                maxValue: 9
+                maxValue: 1
             },
-            
-            
+            {
+                name: "width",
+                defaultValue: 1,
+                minValue: 0,
+                maxValue: 10
+            },
+
+
         ];
     }
 
@@ -946,10 +608,11 @@ class MyProcessor extends AudioWorkletProcessor {
         const reso = parameters.f_reso[0];
         const fOctave = parameters.f_octave[0];
         const octave = parameters.octave[0];
-        const harmInterval = parameters.hinterval[0];
+
         const harmOffset = parameters.hoffset[0];
         const harmCount = parameters.hcount[0];
         const spectrumOctave = parameters.spectrum[0];
+        const spectrumWidth = parameters.width[0];
 
         const fFreq = 11 * Math.pow(2, fOctave);
         const freq = 11 * Math.pow(2, octave);
@@ -957,9 +620,10 @@ class MyProcessor extends AudioWorkletProcessor {
 
         this.harmonics.freq = freq;
         this.harmonics.harmonicsCount = harmCount;
-        this.harmonics.frequencies = createArray(this.harmonics.harmonicsCount,(i) => (i + harmOffset) * Math.pow(2,harmInterval));
+        this.harmonics.harmonicOffset = harmOffset;
+
         this.harmonics.amps = createArray(this.harmonics.harmonicsCount, (i) => {
-            return cosWindow((i * spectrumOctave) / this.harmonics.harmonicsCount);
+            return cosWindow((i * spectrumOctave) / (this.harmonics.harmonicsCount * spectrumWidth));
         });
 
         this.filter.set(fFreq, reso);
@@ -970,9 +634,10 @@ class MyProcessor extends AudioWorkletProcessor {
                 this.phase += this.phaseIncrement;
                 const t = this.phase;
                 const tf = t * freq;
-                // let sample = (tf % 1) < pw ? -vol : vol;
-                let sample = this.harmonics.operation();
-                // sample = this.filter.operation(sample);
+                let sample = 0;
+                // sample = (tf % 1) < pw ? -vol : vol;
+                sample = this.harmonics.operation();
+                sample = this.filter.operation(sample);
                 channel[index] = sample + Math.random() * 0.01;
             }
         });
@@ -980,4 +645,5 @@ class MyProcessor extends AudioWorkletProcessor {
     }
 }
 
+// @ts-ignore
 registerProcessor("my-processor", MyProcessor);

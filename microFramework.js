@@ -55,33 +55,34 @@ const mkKnob = (param) => {
             throw new Error('no 2d context');
         }
         ctx.clearRect(0, 0, round.width, round.height);
-        ctx.strokeStyle = 'white';
-        ctx.fillStyle = 'red';
         ctx.beginPath();
-        ctx.arc(round.width / 2, round.height / 2, round.width / 2, 0, 2 * Math.PI);
+        ctx.strokeStyle = 'black';
+        ctx.moveTo(10, 10);
+        ctx.lineTo(
+            10 + 8 * Math.cos(data.param.value * 2 * Math.PI / paramRange),
+            10 + 8 * Math.sin(data.param.value * 2 * Math.PI / paramRange)
+        );
         ctx.stroke();
-        ctx.fill();
-        ctx.beginPath();
-        ctx.lineWidth = 2;
-        const angle = (data.param.value - data.param.min) / paramRange * 2 * Math.PI;
-        ctx.moveTo(round.width / 2, round.height / 2);
-        ctx.lineTo(round.width / 2 + Math.cos(angle) * round.width / 2, round.height / 2 + Math.sin(angle) * round.height / 2);
+        ctx.closePath();
+        ctx.ellipse(10, 10, 10, 10, 0, 0, 2 * Math.PI);
         ctx.stroke();
+
     }
     round.addEventListener('mousedown', () => {
         isDragging = true;
         dragValueStarted = data.param.value;
-        round.setPointerCapture(1);
+        // round.setPointerCapture(1);
+        round.requestPointerLock();
     });
+    
 
-    round.addEventListener('pointermove', (e) => {
+    document.addEventListener('mousemove', (e) => {
         if (isDragging) {
             e.preventDefault();
             e.stopImmediatePropagation();
             const rect = round.getBoundingClientRect();
-            const centerY = rect.top + rect.height / 2;
-            const dy = e.clientY - centerY;
-            let newVal = dragValueStarted - paramRange * dy / 1000;
+            const dy = e.movementY;
+            let newVal = param.value - paramRange * dy / 1000;
             if (newVal < param.min) {
                 newVal = param.min;
             }
@@ -95,7 +96,7 @@ const mkKnob = (param) => {
 
     window.addEventListener('mouseup', () => {
         isDragging = false;
-        round.releasePointerCapture(1);
+        document.exitPointerLock();
     });
 
     const data = {
