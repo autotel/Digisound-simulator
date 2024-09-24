@@ -816,6 +816,61 @@ const clamp = (v, min, max) => {
     return v
 }
 
+const square = (t) => {
+    return (t % 1) < 0.5 ? 1 : -1;
+}
+
+const cosWindow = (t) => {
+    if(t < 0) return 0;
+    if(t > 1) return 0;
+    return Math.cos((t-0.5) * Math.PI * 2) * 0.5 + 0.5;
+}
+
+class Harmonics extends SampleBySampleOperator {
+    /** @type {number[]} */
+    frequencies = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
+    /** @type {number[]} */
+    amps = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+    /** @type {number[]} */
+    phase = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    /** @type {number} */
+    phaseIncrement = 1 / samplingRate;
+    /** @type {number} */
+    freq = 440;
+    /** @type {number} */
+    amp = 0.5;
+    /** @type {number} */
+    harmonicsCount = 1;
+
+    constructor() {
+        super();
+    }
+
+    operation = () => {
+        let sample = 0;
+        for (let i = 0; i < this.harmonicsCount; i++) {
+            if(!this.phase[i]) this.phase[i] = 0;
+            this.phase[i] += this.phaseIncrement * this.freq * this.frequencies[i];
+            const tf = this.phase[i];
+            sample += Math.sin(tf* 2 * Math.PI) * this.amps[i];
+            // sample += square(tf);
+        }
+        return sample * this.amp / this.harmonicsCount;
+    }
+}
+/**
+ * @template T
+ * @param {number} length
+ * @param {(i:number)=>T} cb
+ * @returns {T[]}
+ */
+const createArray = (length, cb) => {
+    const ret = [];
+    for (let i = 0; i < length; i++) {
+        ret.push(cb(i));
+    }
+    return ret;
+}
 
 class MyProcessor extends AudioWorkletProcessor {
     static get parameterDescriptors() {
@@ -836,7 +891,7 @@ class MyProcessor extends AudioWorkletProcessor {
                 name: "f_reso",
                 defaultValue: 0.5,
                 minValue: 0,
-                maxValue: 5
+                maxValue: 5,
             },
             {
                 name: "f_octave",
@@ -849,11 +904,39 @@ class MyProcessor extends AudioWorkletProcessor {
                 defaultValue: 5,
                 minValue: 0,
                 maxValue: 9
-            }
+            },
+            {
+                name: "hinterval",
+                defaultValue: 2,
+                minValue: 0,
+                maxValue: 2,
+            },
+            {
+                name: "hoffset",
+                defaultValue: -1,
+                minValue: -5,
+                maxValue: 5
+            },
+            {
+                name: "hcount",
+                defaultValue: 1,
+                minValue: 1,
+                maxValue: 32,
+            },
+            {
+                name: "spectrum",
+                defaultValue: 5,
+                minValue: 0,
+                maxValue: 9
+            },
+            
+            
         ];
     }
 
     filter = new LpMoog(0, 0);
+    harmonics = new Harmonics();
+
     phase = 0;
     phaseIncrement = 1 / samplingRate;
     process(inputs, outputs, parameters) {
@@ -863,8 +946,21 @@ class MyProcessor extends AudioWorkletProcessor {
         const reso = parameters.f_reso[0];
         const fOctave = parameters.f_octave[0];
         const octave = parameters.octave[0];
+        const harmInterval = parameters.hinterval[0];
+        const harmOffset = parameters.hoffset[0];
+        const harmCount = parameters.hcount[0];
+        const spectrumOctave = parameters.spectrum[0];
+
         const fFreq = 11 * Math.pow(2, fOctave);
         const freq = 11 * Math.pow(2, octave);
+        const spectrumFreq = 11 * Math.pow(2, spectrumOctave);
+
+        this.harmonics.freq = freq;
+        this.harmonics.harmonicsCount = harmCount;
+        this.harmonics.frequencies = createArray(this.harmonics.harmonicsCount,(i) => (i + harmOffset) * Math.pow(2,harmInterval));
+        this.harmonics.amps = createArray(this.harmonics.harmonicsCount, (i) => {
+            return cosWindow((i * spectrumOctave) / this.harmonics.harmonicsCount);
+        });
 
         this.filter.set(fFreq, reso);
 
@@ -874,8 +970,9 @@ class MyProcessor extends AudioWorkletProcessor {
                 this.phase += this.phaseIncrement;
                 const t = this.phase;
                 const tf = t * freq;
-                let sample = (tf % 1) < pw ? -vol : vol;
-                sample = this.filter.operation(sample);
+                // let sample = (tf % 1) < pw ? -vol : vol;
+                let sample = this.harmonics.operation();
+                // sample = this.filter.operation(sample);
                 channel[index] = sample + Math.random() * 0.01;
             }
         });
