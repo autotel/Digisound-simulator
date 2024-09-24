@@ -32,38 +32,60 @@
  */
 const mkKnob = (param) => {
     const body = document.createElement('div');
-    body.style.width = '20px';
-    body.style.height = '20px';
-    body.style.backgroundColor = 'red';
-    body.style.borderRadius = '50%';
+    const round = document.createElement('canvas');
+    const readout = document.createElement('div');
     body.style.cursor = 'pointer';
+    round.innerHTML = '🪳';
+    body.style.userSelect = 'none';
+
+    body.appendChild(round);
+    body.appendChild(readout);
 
     const paramRange = param.max - param.min;
 
     let isDragging = false;
+    let dragValueStarted = 0;
 
     const redraw = () => {
-        body.innerHTML = data.param.value.toFixed(2);
-        body.style.transform = `rotate(${(data.param.value / paramRange) * 360}deg)`;
+        readout.innerHTML = data.param.value.toFixed(2) + ' ' + data.param.name;
+        round.width = 20;
+        round.height = 20;
+        const ctx = round.getContext('2d');
+        if (!ctx) {
+            throw new Error('no 2d context');
+        }
+        ctx.clearRect(0, 0, round.width, round.height);
+        ctx.strokeStyle = 'white';
+        ctx.fillStyle = 'red';
+        ctx.beginPath();
+        ctx.arc(round.width / 2, round.height / 2, round.width / 2, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.lineWidth = 2;
+        const angle = (data.param.value - data.param.min) / paramRange * 2 * Math.PI;
+        ctx.moveTo(round.width / 2, round.height / 2);
+        ctx.lineTo(round.width / 2 + Math.cos(angle) * round.width / 2, round.height / 2 + Math.sin(angle) * round.height / 2);
+        ctx.stroke();
     }
-
-    body.addEventListener('mousedown', () => {
+    round.addEventListener('mousedown', () => {
         isDragging = true;
+        dragValueStarted = data.param.value;
+        round.setPointerCapture(1);
     });
 
-    window.addEventListener('mousemove', (e) => {
+    round.addEventListener('pointermove', (e) => {
         if (isDragging) {
             e.preventDefault();
             e.stopImmediatePropagation();
-            const rect = body.getBoundingClientRect();
-            const centerX = rect.left + rect.width / 2;
+            const rect = round.getBoundingClientRect();
             const centerY = rect.top + rect.height / 2;
             const dy = e.clientY - centerY;
-            let newVal = paramRange * dy / 100;
-            if(newVal < param.min) {
+            let newVal = dragValueStarted - paramRange * dy / 1000;
+            if (newVal < param.min) {
                 newVal = param.min;
             }
-            if(newVal > param.max) {
+            if (newVal > param.max) {
                 newVal = param.max;
             }
             data.param.value = newVal;
@@ -73,6 +95,7 @@ const mkKnob = (param) => {
 
     window.addEventListener('mouseup', () => {
         isDragging = false;
+        round.releasePointerCapture(1);
     });
 
     const data = {
@@ -113,9 +136,18 @@ const mkArrayScope = (data) => {
         ctx.beginPath();
         const halfHeight = body.height / 2;
         ctx.moveTo(0, halfHeight);
-        const xStep = body.width / data.values.length;
-        for (let i = 0; i < data.values.length; i++) {
-            ctx.lineTo(i * xStep, halfHeight - data.values[i] * halfHeight);
+        let lastv = 1;
+        const firstPositiveZeroCrossing = data.values.findIndex(v => {
+            const ret = lastv < 0 && v >= 0;
+            lastv = v;
+            return ret;
+        });
+        for (let i = 0; i < body.width; i++) {
+            const index = Math.floor(data.values.length * i / body.width) + firstPositiveZeroCrossing;
+            if(index >= data.values.length){
+                break;
+            }
+            ctx.lineTo(i, halfHeight - data.values[index] * halfHeight);
         }
         ctx.stroke();
     }
@@ -125,7 +157,7 @@ const mkArrayScope = (data) => {
         data,
     };
 }
-   
+
 /**
  * @template {Obect} T
  * @param {T} watcheable

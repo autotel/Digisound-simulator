@@ -378,7 +378,7 @@ class LpMoog extends SampleBySampleOperator {
         }
         let f, af, sqf, fb;
         this.set = (frequency, reso) => {
-            this.reset();
+            // this.reset();
             if (frequency < 0) frequency = 0;
             f = (frequency / samplingRate) * Math.PI * 2 // probably bogus, origially was * 1.16 but was not working well
 
@@ -575,8 +575,8 @@ class KarplusVoice extends Voice {
     exciter = new (KarplusVoice.getExciterConstructor())();
     syncExciterType = () => {
         const targetExciter = KarplusVoice.getExciterConstructor();
-        if(targetExciter === this.exciter.constructor) return;
-        if(targetExciter === Exciter) {
+        if (targetExciter === this.exciter.constructor) return;
+        if (targetExciter === Exciter) {
             this.useInputExciter = true;
         }
         this.exciter = new (KarplusVoice.getExciterConstructor())();
@@ -815,3 +815,72 @@ const clamp = (v, min, max) => {
     if (v > max) return max
     return v
 }
+
+
+class MyProcessor extends AudioWorkletProcessor {
+    static get parameterDescriptors() {
+        return [
+            {
+                name: "vol",
+                defaultValue: 0.5,
+                minValue: 0,
+                maxValue: 1
+            },
+            {
+                name: "pw",
+                defaultValue: 0.5,
+                minValue: 0,
+                maxValue: 1
+            },
+            {
+                name: "f_reso",
+                defaultValue: 0.5,
+                minValue: 0,
+                maxValue: 5
+            },
+            {
+                name: "f_octave",
+                defaultValue: 5,
+                minValue: 0,
+                maxValue: 9
+            },
+            {
+                name: "octave",
+                defaultValue: 5,
+                minValue: 0,
+                maxValue: 9
+            }
+        ];
+    }
+
+    filter = new LpMoog(0, 0);
+    phase = 0;
+    phaseIncrement = 1 / samplingRate;
+    process(inputs, outputs, parameters) {
+
+        const vol = parameters.vol[0];
+        const pw = parameters.pw[0];
+        const reso = parameters.f_reso[0];
+        const fOctave = parameters.f_octave[0];
+        const octave = parameters.octave[0];
+        const fFreq = 11 * Math.pow(2, fOctave);
+        const freq = 11 * Math.pow(2, octave);
+
+        this.filter.set(fFreq, reso);
+
+        const output = outputs[0];
+        output.forEach((channel) => {
+            for (let index = 0; index < channel.length; index++) {
+                this.phase += this.phaseIncrement;
+                const t = this.phase;
+                const tf = t * freq;
+                let sample = (tf % 1) < pw ? -vol : vol;
+                sample = this.filter.operation(sample);
+                channel[index] = sample + Math.random() * 0.01;
+            }
+        });
+        return true;
+    }
+}
+
+registerProcessor("my-processor", MyProcessor);
