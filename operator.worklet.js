@@ -544,10 +544,10 @@ class MyProcessor extends AudioWorkletProcessor {
                 maxValue: 1
             },
             {
-                name: "pw",
-                defaultValue: 0.5,
-                minValue: 0,
-                maxValue: 1
+                name: "periodicity",
+                defaultValue: 1,
+                minValue: 1,
+                maxValue: 5
             },
             {
                 name: "f_reso",
@@ -566,6 +566,12 @@ class MyProcessor extends AudioWorkletProcessor {
                 defaultValue: 5,
                 minValue: 0,
                 maxValue: 9
+            },
+            {
+                name: "tone",
+                defaultValue: 1,
+                minValue: 1,
+                maxValue: 20
             },
             {
                 name: "hoffset",
@@ -604,10 +610,11 @@ class MyProcessor extends AudioWorkletProcessor {
     process(inputs, outputs, parameters) {
 
         const vol = parameters.vol[0];
-        const pw = parameters.pw[0];
+        const periodicity = Math.floor(parameters.periodicity[0])
         const reso = parameters.f_reso[0];
         const fOctave = parameters.f_octave[0];
         const octave = parameters.octave[0];
+        const tone = Math.floor(parameters.tone[0]);
 
         const harmOffset = parameters.hoffset[0];
         const harmCount = parameters.hcount[0];
@@ -618,12 +625,17 @@ class MyProcessor extends AudioWorkletProcessor {
         const freq = 11 * Math.pow(2, octave);
         const spectrumFreq = 11 * Math.pow(2, spectrumOctave);
 
-        this.harmonics.freq = freq;
+        this.harmonics.freq = freq * tone;
         this.harmonics.harmonicsCount = harmCount;
         this.harmonics.harmonicOffset = harmOffset;
 
         this.harmonics.amps = createArray(this.harmonics.harmonicsCount, (i) => {
-            return cosWindow((i * spectrumOctave) / (this.harmonics.harmonicsCount * spectrumWidth));
+            if(spectrumWidth === 0) return 0;
+            return cosWindow(
+                (i * spectrumOctave) / 
+                (this.harmonics.harmonicsCount * spectrumWidth)
+            ) * (i % periodicity === 0 ? 1 : 0);
+            // * cosWindow(i / i % periodicity);
         });
 
         this.filter.set(fFreq, reso);
@@ -638,7 +650,8 @@ class MyProcessor extends AudioWorkletProcessor {
                 // sample = (tf % 1) < pw ? -vol : vol;
                 sample = this.harmonics.operation();
                 sample = this.filter.operation(sample);
-                channel[index] = sample + Math.random() * 0.01;
+                sample *= vol;
+                channel[index] = sample;
             }
         });
         return true;
