@@ -709,7 +709,7 @@ class SquareWaveSynth extends AudioWorkletProcessor {
 
         ];
     }
-    delayTimeFilter = new LpBoxcar(0.999);
+    delayTimeFilter = new LpBoxcar(1/samplingRate);
     filter = new LpMoog(0, 0);
     delay = new DelayLine();
     phase = 0;
@@ -729,12 +729,14 @@ class SquareWaveSynth extends AudioWorkletProcessor {
         const freq = 11 * Math.pow(2, octave);
 
         this.filter.set(fFreq, f_reso);
-        this.delay.delaySamples = Math.floor(delayMs * samplingRate / 1000);
         this.delay.feedback = feedback;
+
+        const targetDelaySamples = Math.floor(delayMs * samplingRate / 1000);
 
         const output = outputs[0];
         output.forEach((channel) => {
             for (let index = 0; index < channel.length; index++) {
+                this.delay.delaySamples = this.delayTimeFilter.operation(targetDelaySamples);
                 this.phase += this.phaseIncrement;
                 const t = this.phase;
                 const tf = t * freq;
