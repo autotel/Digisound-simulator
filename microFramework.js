@@ -123,19 +123,28 @@ const mkKnob = (param) => {
  * @returns {$ArrayScope}
  */
 const mkArrayScope = (data) => {
-    const body = document.createElement('canvas');
-    body.width = 1000;
-    body.height = 300;
-    body.style.backgroundColor = 'black';
-    const ctx = body.getContext('2d');
+    const body = document.createElement('div');
+    const canvas = document.createElement('canvas');
+    canvas.width = 1000;
+    canvas.height = 300;
+    canvas.style.backgroundColor = 'black';
+    const vZoom = mkKnob({
+        name: 'vZoom',
+        value: 1,
+        min: 0.1,
+        max: 100,
+    });
+    body.appendChild(vZoom.body);
+    body.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
     if (!ctx) {
         throw new Error('no 2d context');
     }
     const redraw = () => {
-        ctx.clearRect(0, 0, body.width, body.height);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.strokeStyle = 'white';
         ctx.beginPath();
-        const halfHeight = body.height / 2;
+        const halfHeight = canvas.height / 2;
         ctx.moveTo(0, halfHeight);
         let lastv = 1;
         const firstPositiveZeroCrossing = data.values.findIndex(v => {
@@ -143,16 +152,19 @@ const mkArrayScope = (data) => {
             lastv = v;
             return ret;
         });
-        for (let i = 0; i < body.width; i++) {
-            const index = Math.floor(data.values.length * i / body.width) + firstPositiveZeroCrossing;
+        for (let i = 0; i < canvas.width; i++) {
+            const index = Math.floor(data.values.length * i / canvas.width) + firstPositiveZeroCrossing;
             if(index >= data.values.length){
                 break;
             }
-            ctx.lineTo(i, halfHeight - data.values[index] * halfHeight);
+            const val = data.values[index];
+            const zoomedVal = val * vZoom.data.param.value;
+            ctx.lineTo(i, halfHeight - zoomedVal * halfHeight);
         }
         ctx.stroke();
     }
     return {
+        vZoom,
         body,
         redraw,
         data,

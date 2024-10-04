@@ -534,7 +534,7 @@ const createArray = (length, cb) => {
     return ret;
 }
 // @ts-ignore
-class MyProcessor extends AudioWorkletProcessor {
+class HarmonicsProcessor extends AudioWorkletProcessor {
     static get parameterDescriptors() {
         return [
             {
@@ -604,7 +604,6 @@ class MyProcessor extends AudioWorkletProcessor {
 
     filter = new LpMoog(0, 0);
     harmonics = new Harmonics();
-
     phase = 0;
     phaseIncrement = 1 / samplingRate;
     process(inputs, outputs, parameters) {
@@ -630,9 +629,9 @@ class MyProcessor extends AudioWorkletProcessor {
         this.harmonics.harmonicOffset = harmOffset;
 
         this.harmonics.amps = createArray(this.harmonics.harmonicsCount, (i) => {
-            if(spectrumWidth === 0) return 0;
+            if (spectrumWidth === 0) return 0;
             return cosWindow(
-                (i * spectrumOctave) / 
+                (i * spectrumOctave) /
                 (this.harmonics.harmonicsCount * spectrumWidth)
             ) * (i % periodicity === 0 ? 1 : 0);
             // * cosWindow(i / i % periodicity);
@@ -659,4 +658,99 @@ class MyProcessor extends AudioWorkletProcessor {
 }
 
 // @ts-ignore
-registerProcessor("my-processor", MyProcessor);
+registerProcessor("harmonics-processor", HarmonicsProcessor);
+
+// @ts-ignore
+class SquareWaveSynth extends AudioWorkletProcessor {
+    static get parameterDescriptors() {
+        return [
+            {
+                name: "vol",
+                defaultValue: 0.1,
+                minValue: 0,
+                maxValue: 1
+            },
+            {
+                name: "f_reso",
+                defaultValue: 0.5,
+                minValue: 0,
+                maxValue: 5,
+            },
+            {
+                name: "f_octave",
+                defaultValue: 5,
+                minValue: 0,
+                maxValue: 9
+            },
+            {
+                name: "octave",
+                defaultValue: 5,
+                minValue: 0,
+                maxValue: 9
+            },
+            {
+                name: "pw",
+                defaultValue: 0.5,
+                minValue: 0,
+                maxValue: 1
+            },
+            {   
+                name: "delayMs",
+                defaultValue: 0,
+                minValue: 0,
+                maxValue: 1000
+            },
+            {
+                name: "feedback",
+                defaultValue: 0,
+                minValue: -1,
+                maxValue: 1,
+            }
+
+        ];
+    }
+    delayTimeFilter = new LpBoxcar(0.999);
+    filter = new LpMoog(0, 0);
+    delay = new DelayLine();
+    phase = 0;
+    phaseIncrement = 1 / samplingRate;
+
+    process(inputs, outputs, parameters) {
+        const vol = parameters.vol[0];
+        const f_reso = parameters.f_reso[0];
+        const f_octave = parameters.f_octave[0];
+        const octave = parameters.octave[0];
+        const pulseWidth = parameters.pw[0];
+        const delayMs = parameters.delayMs[0];
+        const feedback = parameters.feedback[0];
+
+
+        const fFreq = 11 * Math.pow(2, f_octave);
+        const freq = 11 * Math.pow(2, octave);
+
+        this.filter.set(fFreq, f_reso);
+        this.delay.delaySamples = Math.floor(delayMs * samplingRate / 1000);
+        this.delay.feedback = feedback;
+
+        const output = outputs[0];
+        output.forEach((channel) => {
+            for (let index = 0; index < channel.length; index++) {
+                this.phase += this.phaseIncrement;
+                const t = this.phase;
+                const tf = t * freq;
+                let sample = 0;
+                sample = (tf % 1) < pulseWidth ? -vol : vol;
+                sample = this.delay.operation(sample);
+                sample = this.filter.operation(sample);
+                sample = clip(sample);
+                sample *= vol;
+                channel[index] = sample;
+
+            }
+        });
+        return true;
+    }
+}
+
+// @ts-ignore
+registerProcessor("square-wave-synth", SquareWaveSynth);

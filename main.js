@@ -19,8 +19,6 @@ window.addEventListener('load', function () {
 
     waveScope.redraw();
 
-
-
     const listenButton = document.createElement('div');
     listenButton.classList.add('button');
     listenButton.innerText = 'Listen';
@@ -62,7 +60,7 @@ window.addEventListener('load', function () {
         if (!audioWorkletNode) {
             audioWorkletNode = new AudioWorkletNode(
                 audioContext,
-                "my-processor",
+                "square-wave-synth",
             );
 
             const workletParams = audioWorkletNode.parameters;
